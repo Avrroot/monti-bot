@@ -84,7 +84,7 @@ app/
     content/      нормализация URL/определение платформы, оркестрация пайплайна, searchable_text
     search/       сервис гибридного поиска, Redis-хранилище сессии пагинации
     security/     SSRF-safe HTTP-клиент, rate limiting
-    storage/      S3-совместимое (дружит с MinIO) хранилище объектов для скриншотов
+    storage/      хранилище скриншотов: локальный диск (по умолчанию) или S3-совместимое, за одним интерфейсом
   workers/        arq WorkerSettings + тела задач
 docker/proxy/     опциональный контейнер с ssh -D SOCKS5-туннелем (см. «Исходящий прокси» ниже)
 migrations/       Alembic (написанная вручную первая схема, включая pgvector и FTS-триггер)
@@ -102,9 +102,10 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Сервисы: `postgres` (образ с pgvector), `redis`, `minio` (S3-совместимое хранилище), одноразовая
-задача `migrate` (`alembic upgrade head`), `bot`, `worker`, `api`. `bot`/`worker`/`api` ждут
-успешного завершения `migrate`.
+Сервисы: `postgres` (образ с pgvector), `redis`, одноразовая задача `migrate`
+(`alembic upgrade head`), `bot`, `worker`, `api`. `bot`/`worker`/`api` ждут успешного завершения
+`migrate`. Хранилище скриншотов по умолчанию — общий Docker-volume (без отдельного сервиса);
+`minio` опционален — см. «Хранилище объектов» ниже.
 
 ```bash
 make dev        # docker compose up -d --build, хвост логов bot+worker
@@ -208,6 +209,28 @@ PROXY_URL=socks5://host.docker.internal:1080
 Linux. Дальше просто `docker compose up -d --build` (без `--profile proxy` — туннель на хосте
 закрывает всё).
 
+## Хранилище объектов (скриншоты)
+
+По умолчанию `STORAGE_BACKEND=local` — скриншоты идут на общий Docker-volume
+(`screenshots_data`, примонтирован и в `bot`, и в `worker`), без отдельного сервиса и без образа,
+который нужно тянуть. Это стало дефолтом не просто так: `minio/minio` на Docker Hub теперь требует
+логин (релицензирование MinIO на AGPL в 2024), а их же замена `quay.io/minio/minio` тоже начала
+отдавать 401 на анонимные pull'ы. Вместо охоты за реестрами — для персонального деплоя на одном
+VPS хранилищу скриншотов сторонний образ вообще не нужен.
+
+Если тебе реально нужна S3-семантика (например, bot и worker разнесены по разным хостам без общей
+файловой системы) — выстави `STORAGE_BACKEND=s3`, заполни `S3_*` в `.env` и подними опциональный
+сервис:
+
+```bash
+docker compose --profile s3 up -d --build
+```
+
+Сервис `minio` в `docker-compose.yml` никуда не делся, смотрит на `quay.io` — если и этот образ к
+моменту, когда ты это читаешь, тоже начнёт отдавать 401, просто замени строку `image:` на любой
+другой S3-совместимый образ, больше ничего менять не придётся (`app/services/storage/base.py` —
+интерфейс, который реализуют оба бэкенда).
+
 ## Переменные окружения
 
 Полный список со значениями по умолчанию — в `.env.example`. Обязательные для реального запуска
@@ -221,12 +244,12 @@ Linux. Дальше просто `docker compose up -d --build` (без `--profi
 | `AI_PROVIDER` / `AI_API_KEY` / `AI_MODEL` | структурный анализ контента + разбор поисковых запросов |
 | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | векторы для семантического поиска |
 | `VISION_PROVIDER` / `VISION_MODEL` | понимание скриншотов/фото |
-| `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | хранилище скриншотов (по умолчанию MinIO) |
 
-Опционально: `SENTRY_DSN`, `ADMIN_API_TOKEN` (закрывает `/admin/*` в FastAPI-приложении),
-`TELEGRAM_ADMIN_IDS`, `SEARCH_WEIGHT_*` (веса гибридного ранжирования), `RATE_LIMIT_*`,
-`PROXY_URL` / `PROXY_SSH_HOST` / `PROXY_SSH_PORT` / `PROXY_SSH_USER` / `PROXY_SSH_KEY_PATH`
-(см. «Исходящий прокси» выше).
+Опционально: `STORAGE_BACKEND` / `LOCAL_STORAGE_PATH` / `S3_*` (см. «Хранилище объектов» выше,
+значения по умолчанию менять не нужно), `SENTRY_DSN`, `ADMIN_API_TOKEN` (закрывает `/admin/*` в
+FastAPI-приложении), `TELEGRAM_ADMIN_IDS`, `SEARCH_WEIGHT_*` (веса гибридного ранжирования),
+`RATE_LIMIT_*`, `PROXY_URL` / `PROXY_SSH_HOST` / `PROXY_SSH_PORT` / `PROXY_SSH_USER` /
+`PROXY_SSH_KEY_PATH` (см. «Исходящий прокси» выше).
 
 ## Тесты
 
@@ -259,7 +282,8 @@ Linux. Дальше просто `docker compose up -d --build` (без `--profi
 - Приём ссылок для Instagram/TikTok/YouTube/YouTube Shorts/Pinterest/Threads/любой веб-страницы,
   с защищённым от SSRF получением данных и плавной деградацией (при неудачном извлечении ссылка
   всё равно сохраняется)
-- Приём скриншотов/фото через vision-модель, хранение в S3-совместимом хранилище
+- Приём скриншотов/фото через vision-модель, хранение на локальном Docker-volume по умолчанию
+  (S3-совместимое хранилище опционально)
 - AI-классификация по контролируемому словарю категорий + свободные подкатегории/теги/сущности
 - Embeddings + хранение в pgvector
 - Гибридный (лексический + семантический + метаданные + свежесть) поиск на естественном языке,

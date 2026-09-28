@@ -78,7 +78,7 @@ app/
     content/      url normalization/platform detection, pipeline orchestration, searchable_text
     search/       hybrid search service, Redis-backed pagination session store
     security/     SSRF-safe HTTP client, rate limiting
-    storage/      S3-compatible (MinIO-friendly) object storage for screenshots
+    storage/      screenshot storage: local disk (default) or S3-compatible, behind one interface
   workers/        arq WorkerSettings + job bodies
 docker/proxy/     optional ssh -D SOCKS5 tunnel container (see "Outbound proxy" below)
 migrations/       Alembic (hand-written initial schema incl. pgvector + FTS trigger)
@@ -95,9 +95,10 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Services: `postgres` (pgvector image), `redis`, `minio` (S3-compatible storage), a one-shot
-`migrate` job (`alembic upgrade head`), `bot`, `worker`, `api`. `bot`/`worker`/`api` all wait on
-`migrate` completing successfully.
+Services: `postgres` (pgvector image), `redis`, a one-shot `migrate` job (`alembic upgrade head`),
+`bot`, `worker`, `api`. `bot`/`worker`/`api` all wait on `migrate` completing successfully. Screenshot
+storage defaults to a shared Docker volume (no extra service); `minio` is opt-in — see
+"Object storage" below.
 
 ```bash
 make dev        # docker compose up -d --build, tails bot+worker logs
@@ -200,6 +201,27 @@ PROXY_URL=socks5://host.docker.internal:1080
 Then just `docker compose up -d --build` (no `--profile proxy` needed — the host tunnel covers
 everything).
 
+## Object storage (screenshots)
+
+Default is `STORAGE_BACKEND=local` — screenshots go on a shared Docker volume (`screenshots_data`,
+mounted into both `bot` and `worker`), no extra service, no image to pull. This became the default
+after direct experience: `minio/minio` on Docker Hub now requires login (MinIO's 2024 AGPL
+relicensing), and its `quay.io/minio/minio` replacement has also been returning 401 to anonymous
+pulls. Rather than chase registries, screenshot storage just doesn't need a third-party image for a
+single-VPS personal deployment.
+
+If you actually need S3 semantics (e.g. bot and worker on separate hosts without a shared
+filesystem), set `STORAGE_BACKEND=s3`, fill in `S3_*` in `.env`, and start the optional service:
+
+```bash
+docker compose --profile s3 up -d --build
+```
+
+`docker-compose.yml`'s `minio` service is still there for this case, pointed at `quay.io` — if that
+image also 401s for you by the time you read this, swap the `image:` line for any other
+S3-compatible image; nothing else in the app needs to change (`app/services/storage/base.py` is the
+interface both backends implement).
+
 ## Environment variables
 
 See `.env.example` for the full list with defaults. Required to actually run the bot:
@@ -212,9 +234,9 @@ See `.env.example` for the full list with defaults. Required to actually run the
 | `AI_PROVIDER` / `AI_API_KEY` / `AI_MODEL` | structured content analysis + search query parsing |
 | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | semantic search vectors |
 | `VISION_PROVIDER` / `VISION_MODEL` | screenshot/photo understanding |
-| `S3_ENDPOINT` / `S3_BUCKET` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | screenshot storage (MinIO by default) |
 
-Optional: `SENTRY_DSN`, `ADMIN_API_TOKEN` (gates `/admin/*` on the FastAPI app),
+Optional: `STORAGE_BACKEND` / `LOCAL_STORAGE_PATH` / `S3_*` (see "Object storage" above, defaults
+need no changes), `SENTRY_DSN`, `ADMIN_API_TOKEN` (gates `/admin/*` on the FastAPI app),
 `TELEGRAM_ADMIN_IDS`, `SEARCH_WEIGHT_*` (hybrid ranking weights), `RATE_LIMIT_*`,
 `PROXY_URL` / `PROXY_SSH_HOST` / `PROXY_SSH_PORT` / `PROXY_SSH_USER` / `PROXY_SSH_KEY_PATH`
 (see "Outbound proxy" above).
@@ -245,7 +267,8 @@ External AI/extraction APIs are never called in tests — extraction is pure-fun
 - Telegram auth/user-provisioning, onboarding, i18n (ru default, en scaffolded)
 - URL intake for Instagram/TikTok/YouTube/YouTube Shorts/Pinterest/Threads/any web page, with
   SSRF-hardened fetching and graceful degradation (a failed extraction still saves the URL)
-- Screenshot/photo intake via vision model, stored in S3-compatible storage
+- Screenshot/photo intake via vision model, stored on a local Docker volume by default (S3-compatible
+  storage optional)
 - AI structured classification into a controlled category vocabulary + free subcategory/tags/entities
 - Embeddings + pgvector storage
 - Hybrid (lexical + semantic + metadata + recency) natural-language search, no `/search` required

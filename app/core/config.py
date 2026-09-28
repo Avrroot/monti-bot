@@ -58,7 +58,11 @@ class Settings(BaseSettings):
 
     ai_request_timeout_seconds: float = Field(default=30.0, alias="AI_REQUEST_TIMEOUT_SECONDS")
 
-    # --- Object storage (S3-compatible) ---
+    # --- Object storage (screenshots) ---
+    # "local": shared Docker volume, zero external dependency (default -- see
+    # app/services/storage/local_storage.py for why). "s3": MinIO or real S3.
+    storage_backend: str = Field(default="local", alias="STORAGE_BACKEND")
+    local_storage_path: str = Field(default="/data/screenshots", alias="LOCAL_STORAGE_PATH")
     s3_endpoint: str = Field(default="http://localhost:9000", alias="S3_ENDPOINT")
     s3_bucket: str = Field(default="savebot", alias="S3_BUCKET")
     s3_access_key: str = Field(default="", alias="S3_ACCESS_KEY")

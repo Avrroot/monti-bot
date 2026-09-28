@@ -11,7 +11,7 @@ from app.bot.keyboards.callback_data import LanguagePick, SettingsAction
 from app.core.logging import get_logger
 from app.db.models.user import User
 from app.db.repositories.users import UserRepository
-from app.services.storage.object_storage import ObjectStorage
+from app.services.storage.factory import get_object_storage
 
 logger = get_logger(__name__)
 router = Router(name="settings")
@@ -117,7 +117,7 @@ async def handle_delete_data_confirm(
 
     if storage_keys:
         try:
-            await ObjectStorage().delete_many([k for k in storage_keys if k])
+            await get_object_storage().delete_many([k for k in storage_keys if k])
         except Exception as exc:  # noqa: BLE001
             logger.warning("delete_data_storage_cleanup_failed", error=str(exc))
 

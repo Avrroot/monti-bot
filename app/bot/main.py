@@ -14,7 +14,7 @@ from app.bot.middlewares.user_context import UserContextMiddleware
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.queue import close_arq_pool
-from app.services.storage.object_storage import ObjectStorage
+from app.services.storage.factory import get_object_storage
 
 logger = get_logger(__name__)
 
@@ -43,7 +43,7 @@ async def main() -> None:
     dp.include_router(build_root_router())
 
     try:
-        await ObjectStorage().ensure_bucket()
+        await get_object_storage().ensure_bucket()
     except Exception as exc:  # noqa: BLE001
         logger.warning("object_storage_bootstrap_failed", error=str(exc))
 

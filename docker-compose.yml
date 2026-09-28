@@ -29,9 +29,17 @@ services:
       timeout: 5s
       retries: 10
 
+  # Optional: only needed if STORAGE_BACKEND=s3 in .env. Default is
+  # STORAGE_BACKEND=local (a shared Docker volume, no image to pull) --
+  # see README "Object storage" section for why. Start with:
+  #   docker compose --profile s3 up -d --build
   minio:
+    profiles: ["s3"]
     # minio/minio on Docker Hub requires login since MinIO's 2024 AGPL
-    # relicensing -- quay.io is their current publicly-pullable registry.
+    # relicensing; quay.io/minio/minio has since started returning 401 to
+    # anonymous pulls too. If this also fails for you, any other
+    # S3-compatible image works -- just update this line, nothing else in
+    # the app cares which one.
     image: quay.io/minio/minio:latest
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -92,6 +100,11 @@ services:
     # see README "Outbound proxy" section. Harmless no-op if unused.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Shared with `worker` -- screenshots are uploaded here (bot) and read
+    # back here (worker, during analysis). Only used when STORAGE_BACKEND=local
+    # (the default); harmless no-op otherwise.
+    volumes:
+      - screenshots_data:/data/screenshots
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,6 +121,8 @@ services:
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - screenshots_data:/data/screenshots
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,3 +153,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  screenshots_data:

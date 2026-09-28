@@ -23,7 +23,7 @@ from app.db.repositories.tags import TagRepository
 from app.db.session import async_session_factory
 from app.services.content.pipeline import process_image_save, process_url_save
 from app.services.security.rate_limit import decrement_concurrent_jobs
-from app.services.storage.object_storage import ObjectStorage
+from app.services.storage.factory import get_object_storage
 
 logger = get_logger(__name__)
 
@@ -122,7 +122,7 @@ async def save_image_task(
     await _safe_edit(bot, chat_id, status_message_id, t("status.analyzing", locale=locale))
 
     try:
-        storage = ObjectStorage()
+        storage = get_object_storage()
         image_bytes = await storage.get_bytes(storage_key)
 
         async with async_session_factory() as session:

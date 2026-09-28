@@ -38,7 +38,7 @@ from app.services.security.rate_limit import (
     increment_concurrent_jobs,
 )
 from app.services.security.safe_http import UnsafeURLError, validate_url_safety
-from app.services.storage.object_storage import ObjectStorage
+from app.services.storage.factory import get_object_storage
 
 logger = get_logger(__name__)
 router = Router(name="intake")
@@ -149,7 +149,7 @@ async def handle_photo(message: Message, session: AsyncSession, user: User, loca
 
     status_message = await message.answer(t("status.image_received", locale=locale))
 
-    storage = ObjectStorage()
+    storage = get_object_storage()
     await storage.ensure_bucket()
     storage_key = await storage.upload_bytes(data, content_type=mime_type)
 

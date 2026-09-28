@@ -18,7 +18,7 @@ from app.db.models.user import User
 from app.db.repositories.saved_items import SavedItemRepository
 from app.db.repositories.tags import TagRepository
 from app.services.content.searchable_text import rebuild_searchable_text_for_item
-from app.services.storage.object_storage import ObjectStorage
+from app.services.storage.factory import get_object_storage
 
 logger = get_logger(__name__)
 router = Router(name="item_actions")
@@ -106,7 +106,7 @@ async def handle_delete_confirm(
 
     if deleted and storage_key:
         try:
-            await ObjectStorage().delete(storage_key)
+            await get_object_storage().delete(storage_key)
         except Exception as exc:  # noqa: BLE001
             logger.warning("delete_storage_object_failed", key=storage_key, error=str(exc))
 
