@@ -1,0 +1,129 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-savebot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-savebot}
+      POSTGRES_DB: ${POSTGRES_DB:-savebot}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-savebot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-savebot}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-savebot123456}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      target: base
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+
+  # Optional: only needed when the host has no direct route to Telegram/
+  # OpenAI/social platforms. Holds an `ssh -D` SOCKS5 tunnel to a jump host
+  # that does. Not started by a plain `docker compose up` -- see README
+  # "Outbound proxy" section. Start with:
+  #   docker compose --profile proxy up -d --build
+  proxy:
+    profiles: ["proxy"]
+    build:
+      context: ./docker/proxy
+    restart: unless-stopped
+    environment:
+      PROXY_SSH_HOST: ${PROXY_SSH_HOST}
+      PROXY_SSH_PORT: ${PROXY_SSH_PORT:-22}
+      PROXY_SSH_USER: ${PROXY_SSH_USER}
+    volumes:
+      - ${PROXY_SSH_KEY_PATH:-./secrets/proxy_ssh_key}:/keys/id_ed25519:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1080"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    build:
+      context: .
+      target: bot
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      target: worker
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
