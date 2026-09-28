@@ -30,7 +30,9 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    # minio/minio on Docker Hub requires login since MinIO's 2024 AGPL
+    # relicensing -- quay.io is their current publicly-pullable registry.
+    image: quay.io/minio/minio:latest
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
