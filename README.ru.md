@@ -148,6 +148,66 @@ OpenAI/Anthropic и все экстракторы контента (`safe_http.p
   указанные прямо в URL, и имена вроде `localhost`) перед тем как отдать имя хоста прокси для
   удалённого резолва.
 
+### Если сам Docker не может стянуть образы (`docker compose ... --build` падает на pull)
+
+Некоторые VPS-сети блокируют Docker Hub целиком, а не только Telegram/OpenAI — `docker compose up
+--build` падает ещё до того, как заработает хоть строчка твоего кода, и контейнер `proxy` тут не
+поможет (он сам не соберётся без своего базового образа). Разрываем порочный круг, подняв туннель
+не в контейнере, а прямо на **хосте**, и направив на него сам демон Docker:
+
+```bash
+sudo apt-get update && sudo apt-get install -y autossh
+
+sudo tee /etc/systemd/system/ssh-socks-proxy.service >/dev/null <<'EOF'
+[Unit]
+Description=SSH SOCKS5 tunnel for outbound proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=AUTOSSH_GATETIME=0
+Environment=AUTOSSH_POLL=30
+ExecStart=/usr/bin/autossh -M 0 -N \
+  -o "BatchMode=yes" -o "StrictHostKeyChecking=no" -o "UserKnownHostsFile=/dev/null" \
+  -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" \
+  -D 0.0.0.0:1080 -p <PROXY_SSH_PORT> -i /path/to/secrets/proxy_ssh_key <PROXY_SSH_USER>@<PROXY_SSH_HOST>
+Restart=always
+RestartSec=5
+User=<твой-linux-юзер>
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now ssh-socks-proxy
+sudo systemctl status ssh-socks-proxy   # должен быть active, без цикла рестартов
+
+# Направляем собственные pull'ы Docker-демона через туннель:
+sudo mkdir -p /etc/systemd/system/docker.service.d
+sudo tee /etc/systemd/system/docker.service.d/http-proxy.conf >/dev/null <<'EOF'
+[Service]
+Environment="HTTP_PROXY=socks5://127.0.0.1:1080"
+Environment="HTTPS_PROXY=socks5://127.0.0.1:1080"
+Environment="NO_PROXY=localhost,127.0.0.1"
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart docker
+
+docker pull redis:7-alpine   # теперь должно получиться
+```
+
+Как только image pull заработал, направь приложение на **тот же самый** туннель на хосте, вместо
+контейнерного `proxy` (один туннель, а не два) — в `.env`:
+
+```
+PROXY_URL=socks5://host.docker.internal:1080
+```
+
+`extra_hosts: host.docker.internal:host-gateway` (уже прописан в `docker-compose.yml` для
+`bot`/`worker`/`api`) делает так, что это имя резолвится в адрес хоста из любого контейнера на
+Linux. Дальше просто `docker compose up -d --build` (без `--profile proxy` — туннель на хосте
+закрывает всё).
+
 ## Переменные окружения
 
 Полный список со значениями по умолчанию — в `.env.example`. Обязательные для реального запуска

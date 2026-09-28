@@ -85,6 +85,11 @@ services:
       target: bot
     restart: unless-stopped
     env_file: .env
+    # Lets PROXY_URL point at a host-level tunnel (socks5://host.docker.internal:PORT)
+    # -- e.g. when Docker itself needed a host-level proxy just to pull images,
+    # see README "Outbound proxy" section. Harmless no-op if unused.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,6 +104,8 @@ services:
       target: worker
     restart: unless-stopped
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,6 +120,8 @@ services:
       target: api
     restart: unless-stopped
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8080:8080"
     depends_on:

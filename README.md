@@ -140,6 +140,66 @@ Two things worth knowing:
   the URL, and hostnames like `localhost`) before handing the hostname to the proxy to resolve
   remotely.
 
+### If Docker itself can't pull images (`docker compose ... --build` fails on the pull)
+
+Some VPS networks block Docker Hub entirely, not just Telegram/OpenAI — `docker compose up --build`
+fails before any of your code even runs, so the `proxy` *container* above can't help (it can't be
+built without pulling its own base image). Break the chicken-and-egg by running the tunnel on the
+**host** instead, and pointing the Docker daemon itself at it:
+
+```bash
+sudo apt-get update && sudo apt-get install -y autossh
+
+sudo tee /etc/systemd/system/ssh-socks-proxy.service >/dev/null <<'EOF'
+[Unit]
+Description=SSH SOCKS5 tunnel for outbound proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=AUTOSSH_GATETIME=0
+Environment=AUTOSSH_POLL=30
+ExecStart=/usr/bin/autossh -M 0 -N \
+  -o "BatchMode=yes" -o "StrictHostKeyChecking=no" -o "UserKnownHostsFile=/dev/null" \
+  -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" \
+  -D 0.0.0.0:1080 -p <PROXY_SSH_PORT> -i /path/to/secrets/proxy_ssh_key <PROXY_SSH_USER>@<PROXY_SSH_HOST>
+Restart=always
+RestartSec=5
+User=<your-linux-user>
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now ssh-socks-proxy
+sudo systemctl status ssh-socks-proxy   # should be active, no restart loop
+
+# Point the Docker daemon's own image pulls through it:
+sudo mkdir -p /etc/systemd/system/docker.service.d
+sudo tee /etc/systemd/system/docker.service.d/http-proxy.conf >/dev/null <<'EOF'
+[Service]
+Environment="HTTP_PROXY=socks5://127.0.0.1:1080"
+Environment="HTTPS_PROXY=socks5://127.0.0.1:1080"
+Environment="NO_PROXY=localhost,127.0.0.1"
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart docker
+
+docker pull redis:7-alpine   # should now succeed
+```
+
+Once image pulls work, point the app at the *same* host tunnel instead of the containerized
+`proxy` service (one tunnel, not two) — in `.env`:
+
+```
+PROXY_URL=socks5://host.docker.internal:1080
+```
+
+`extra_hosts: host.docker.internal:host-gateway` (already in `docker-compose.yml` for
+`bot`/`worker`/`api`) makes that hostname resolve to the host from inside any container on Linux.
+Then just `docker compose up -d --build` (no `--profile proxy` needed — the host tunnel covers
+everything).
+
 ## Environment variables
 
 See `.env.example` for the full list with defaults. Required to actually run the bot:
